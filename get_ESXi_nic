@@ -1,0 +1,40 @@
+#############
+### 主程式 ###
+#############
+
+#!/bin/bash
+x=$1
+Nics=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "esxcfg-nics -l" |grep Up |awk '{print $1}' |grep -v 'vusb'`
+for Nic in $(echo $Nics)
+do
+        speed=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "esxcli network nic list" |grep -w $Nic |awk '{print $6}'`
+        port=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "vim-cmd hostsvc/net/query_networkhint --pnic-name=$Nic" |grep 'portId' |awk -F \= '{print $2}' |sed 's/\,//g' |sed 's/\"//g' |sed 's/[[:space:]]//g'`
+        switch=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "vim-cmd hostsvc/net/query_networkhint --pnic-name=$Nic" |grep 'devId' |awk -F \= '{print $2}' |sed 's/\,//g' |sed 's/\"//g' |sed 's/[[:space:]]//g'`
+        vlan=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "vim-cmd hostsvc/net/query_networkhint --pnic-name=$Nic" |grep 'vlanId' |awk -F \= '{print $2}' |sort -n |xargs |sed 's/[[:space:]]//g' |sed 's/,$//'`
+        echo "$x|$Nic|$speed|$switch|$port|$vlan"
+done
+
+###########################
+#### 以下是jenkins的部分 ###
+###########################
+
+#!/bin/bash
+### Description: Check host nics
+
+# vars
+script='/tmp/nic_info.sh'
+datetime=`/usr/bin/date +"%Y.%m.%d"`
+insert_file="/tmp/OA-${datetime}-nic_info.csv"
+list="/tmp/OA-${datetime}-${vcenter}.csv"
+
+# 清空舊資料
+rm -rf /tmp/OA-*-nic_info.csv
+echo -n ""> $insert_file
+
+# main
+echo ""
+echo "===================="
+echo "|| Start Scanning ||"
+echo "===================="
+echo ""
+cat $list | awk -F \, '{print $1}' | xargs -I{} -n1 -P20 sh $script {} > $insert_file
