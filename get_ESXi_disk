@@ -1,0 +1,52 @@
+#!/bin/bash
+
+##############
+### 主程式 ###
+##############
+
+### vars
+racadm="/usr/sbin/racadm"
+ilorest="/usr/sbin/ilorest"
+idrac_user='root'
+idrac_pass='xxx'
+ilo_user='admin'
+ilo_pass='ooo'
+
+### 必須先抓到IPMI_IP , 判別廠牌後再分別用IPMI工具抓取實體硬碟資訊
+x=$1
+vendor=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "esxcli hardware platform get" |grep 'Vendor' |awk -F \: '{print $2}' |sed 's/[[:space:]]//g' |sed 's/Inc\.//g'`
+ipmi_ip=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "/ipmitool lan print" |grep 'IP Address' |grep -v 'Source' |awk -F \: '{print $2}' |sed 's/[[:space:]]//g'`
+
+if [[ $vendor == 'Dell' ]];then
+    ### Dell
+    racadm -r $ipmi_ip -u $idrac_user -p $idrac_pass raid get pdisks -o |egrep -w "Revision|Size|MediaType|SerialNumber|ProductId" |awk -F \= '{print $2}' |sed 's/$/\,/g' |awk '{if(NR%5!=0)ORS=" ";else ORS="\n"}1' |sed 's/[[:space:]]//g' |sed 's/,$//' |sed 's/GB//' |sed "s/$/\,$x/g" |awk -F \, '{print $2,$6,$1,$5,$3,$4}' |sed 's/\ /\,/g'
+
+elif [[ $vendor == 'HPE' || $vendor == 'HP' ]];then
+    ### HP
+    ilorest list --selector=HpeSmartStorageDiskDrive. --url=$ipmi_ip -u $ilo_user -p $ilo_pass |egrep "CapacityGB|VersionString|MediaType|Model|SerialNumber" |sed 's/[[:space:]]//g' |awk -F \= '{print $2}' |awk '{if(NR%5!=0)ORS=",";else ORS="\n"}1' |sed "s/$/\,$x/g" |awk -F \, '{print $3,$6,$1,$5,$4,$2}' |sed 's/\ /\,/g'
+fi
+
+##########################
+### 以下是jenkins的部分 ###
+##########################
+
+#!/bin/bash
+### vars
+datetime=`/usr/bin/date +"%Y.%m.%d"`
+insert_file="/tmp/OA-${datetime}-disk_info.csv"
+list="/tmp/OA-${datetime}-${vcenter}.csv"
+script="/tmp/OA-disk_info.sh" ### 主程式 ###
+
+### 清空舊資訊
+echo $list
+rm -rf /tmp/OA-*-disk_info.csv
+echo ""> $insert_file
+
+# main
+echo ""
+echo "===================="
+echo "|| Start Scanning ||"
+echo "===================="
+echo ""
+# 導出前再轉換為TB
+cat $list | awk -F \, '{print $1}' | xargs -I{} -n1 -P10 sh $script {} |awk -F',' '{size = $3 / 1000;$3 = sprintf("%.2f", size);print $1 "," $2 "," $3 "," $4 "," $5 "," $6}' > $insert_file
