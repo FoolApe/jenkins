@@ -1,0 +1,43 @@
+#!/bin/bash
+##############
+### 主程式 ###
+##############
+
+x=$1
+SN=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "esxcli hardware platform get" |grep 'Serial Number' |grep -v Enclosure |awk -F \: '{print $2}' |sed 's/[[:space:]]//g'`
+Vlan=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "esxcli network vswitch standard portgroup list" |awk -F'vSwitch' '{print $2}' |awk '{print $3}' |sort -n |uniq |sed '/^$/d' |xargs |sed 's/\ /\,/g'`
+Mode=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "esxcli system maintenanceMode get"`
+SNMP=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "esxcli system snmp get" |grep Enable |awk -F \: '{print $2}' |sed 's/[[:space:]]//g'`
+IPMI=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "/ipmitool lan print" |grep 'IP Address' |grep -v 'Source' |awk -F \: '{print $2}' |sed 's/[[:space:]]//g'`
+Vendor=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "esxcli hardware platform get" |grep Vendor |sed 's/Vendor//g' |sed 's/Name//g' |sed 's/\://g' |sed 's/^     //g' |sed 's/Inc\.//g' | sed 's/[[:space:]]//g'`
+Model=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "esxcli hardware platform get" |grep 'Product Name' |awk -F \: '{print $2}' |sed 's/^\ //g' |sed 's/^ProLiant\ //g' |sed 's/PowerEdge\ //g'`
+Uptime=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "/bin/uptime" |awk -F \, '{print $1}' |awk -F'up' '{print $2}' |sed 's/^\ //g'`
+Hostname=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "esxcli system hostname get" |grep 'Host Name' |awk -F \: '{print $2}' |sed 's/^\ //'`
+Nics=`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$x "esxcfg-nics -l" |grep Up |awk '{print $1}' |xargs |sed 's/\ /\,/g'`
+echo "$x|$SN|$Vlan|$Mode|$SNMP|$IPMI|$Vendor|$Model|$Uptime|$Hostname|$Nics"
+
+
+##########################
+### 以下是jenkins的部分 ###
+##########################
+#!/bin/bash
+### Description: Check host infos
+
+# vars
+
+script='/tmp/server_info.sh' ### 主程式 ###
+datetime=`/usr/bin/date +"%Y.%m.%d"`
+insert_file="/tmp/OA-${datetime}-esxi_info.csv"
+list="/tmp/OA-${datetime}-${vcenter}.csv" ## OA的VC_list
+
+# 清空舊資料
+rm -rf /tmp/OA-*-esxi_info.csv
+echo -n ""> $insert_file
+
+# main
+echo ""
+echo "===================="
+echo "|| Start Scanning ||"
+echo "===================="
+echo ""
+cat $list | awk -F \, '{print $1}' | xargs -I{} -n1 -P20 sh $script {} > $insert_file
